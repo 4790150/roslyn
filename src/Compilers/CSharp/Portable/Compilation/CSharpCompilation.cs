@@ -13,6 +13,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Metadata;
+using System.ServiceModel.Description;
 using System.Threading;
 using Microsoft.Cci;
 using Microsoft.CodeAnalysis;

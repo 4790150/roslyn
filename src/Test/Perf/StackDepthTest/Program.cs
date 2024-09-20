@@ -4,12 +4,16 @@
 
 #nullable disable
 
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.Text;
 using System;
+using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Emit;
+using Microsoft.CodeAnalysis.Text;
 
 namespace OverflowSensitivity
 {
@@ -41,6 +45,61 @@ namespace OverflowSensitivity
 
             Console.WriteLine($"Running in {IntPtr.Size * 8}-bit mode");
 
+
+        const string programText =
+@"using System;
+namespace TopLevel
+{
+    class Base {}
+    class Foo : Base {
+        public static bool IsWin() {
+            return true;
+        }
+
+        public static bool IsWin(int i) {
+            return i > 0;
+        }
+
+        public static void Main()
+        {
+            Foo.IsWin(true);
+        }
+    }
+}";
+
+
+            SyntaxTree tree = CSharpSyntaxTree.ParseText(programText);
+            CompilationUnitSyntax root = tree.GetCompilationUnitRoot();
+
+            var compilation = CSharpCompilation.Create("HelloWorld")
+                .AddReferences(MetadataReference.CreateFromFile(
+                    typeof(string).Assembly.Location))
+                .AddSyntaxTrees(tree);
+
+            using (var ms = new MemoryStream())
+            {
+                EmitResult result = compilation.Emit(ms);
+
+                if (result.Success)
+                {
+                    ms.Seek(0, SeekOrigin.Begin);
+                    Assembly assembly = Assembly.Load(ms.ToArray());
+                    MethodInfo method = assembly.EntryPoint;
+                    method.Invoke(null, null);
+                }
+                else
+                {
+                    foreach (var diagnostic in result.Diagnostics)
+                    {
+                        Console.WriteLine(diagnostic.ToString());
+                    }
+                }
+            }
+
+            SemanticModel model = compilation.GetSemanticModel(tree);
+
+            forNodes(model, root);
+
             if (int.TryParse(args[0], out var i))
             {
                 CompileCode(MakeCode(i));
@@ -53,7 +112,34 @@ namespace OverflowSensitivity
             }
         }
 
-        private static string MakeCode(int depth)
+        private class Base
+        {
+            public void Func() { }
+            public void Func(int i, string s) { }
+        }
+
+        private static void forNodes(SemanticModel model, SyntaxNode node)
+        {
+            foreach (var child in node.ChildNodes())
+            {
+                var symbolInfo = model.GetSymbolInfo(child);
+                var symbol = model.GetDeclaredSymbol(child);
+                if (symbolInfo.Symbol != null)
+                {
+                    Console.WriteLine("node={0},     symbol={1},  isDeclared={2}", child, symbolInfo.Symbol, symbol != null);
+                }
+
+                if (symbol != null)
+                {
+                    var t3 = symbol.GetType();
+                    Console.WriteLine("node={0},     symbol={1},  isDeclared={2}", child, symbolInfo.Symbol??symbol, symbol != null);
+                }
+
+                forNodes(model, child);
+            }
+        }
+
+private static string MakeCode(int depth)
         {
             var builder = new StringBuilder();
             builder.AppendLine(
